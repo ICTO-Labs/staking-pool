@@ -1,27 +1,8 @@
 {
   "canisters": {
     "staking_pool": {
-      "main": "src/staking_pool/main.mo",
+      "main": "src/main.mo",
       "type": "motoko"
-    },
-    "staking_pool_assets": {
-      "dependencies": [
-        "staking_pool"
-      ],
-      "frontend": {
-        "entrypoint": "src/staking_pool_assets/src/index.html"
-      },
-      "source": [
-        "src/staking_pool_assets/assets",
-        "dist/staking_pool_assets/"
-      ],
-      "type": "assets"
-    }
-  },
-  "defaults": {
-    "build": {
-      "args": "",
-      "packtool": ""
     }
   },
   "dfx": "0.9.3",
@@ -29,6 +10,11 @@
     "local": {
       "bind": "127.0.0.1:8000",
       "type": "ephemeral"
+    }
+  },
+  "defaults": {
+    "build": {
+      "packtool": "vessel sources"
     }
   },
   "version": 1
