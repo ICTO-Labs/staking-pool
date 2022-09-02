@@ -1,6 +1,9 @@
 import Principal "mo:base/Principal";
 import Result "mo:base/Result";
 import Time "mo:base/Time";
+import Nat "mo:base/Nat";
+import Nat64 "mo:base/Nat64";
+import Nat32 "mo:base/Nat32";
 
 import Ext "mo:ext/Ext";
 
@@ -10,7 +13,7 @@ module {
 
     public type StakeRequest = {
         from_subaccount  : ?Ext.SubAccount;
-        tokens           : [Ext.TokenIdentifier];
+        token            : Ext.TokenIdentifier;
     };
 
     public type StakingResponse = [(
@@ -18,7 +21,9 @@ module {
         Staking
     )];
     public type Staking = {
-        account: Ext.AccountIdentifier;
+        stakeAddress: Ext.AccountIdentifier;
+        stakeSubAccount: Nat;
+        staker: Ext.AccountIdentifier;
         principal: Principal;
         stakeTime: Time.Time;
         harvestTime: Time.Time;
@@ -26,12 +31,50 @@ module {
         multiply: Nat; //Depend on NRI, Tier...etc
     };
 
+    public type TransactionResponse = [(
+        Nat,
+        Transaction
+    )];
+
+    public type HarvestTransactionResponse = [(
+        Nat,
+        HarvestTransaction
+    )];
+
+    //NFT transaction - Method: Stake/Unstake
     public type Transaction = {
-        token   : Ext.TokenIdentifier;
-        seller  : Principal;
-        price   : Nat64;
-        buyer   : Ext.AccountIdentifier;
-        time    : Time.Time;
+        // id          : Nat32;
+        token       : Ext.TokenIdentifier;
+        from        : Ext.AccountIdentifier;
+        account     : Nat;//Subaccount of stake address.
+        to          : Ext.AccountIdentifier;
+        method      : Text;//Stake-Unstake
+        time        : Time.Time;
     };
 
+    //Token transaction
+    public type HarvestTransaction = {
+        // id          : Nat;
+        from        : Principal;
+        to          : Principal;
+        amount      : Nat;
+        time        : Time.Time;
+    };
+
+    public type StakingPool = {
+        name: Text;//Name of Pool
+        startTime: Time.Time;
+        endTime: Time.Time;
+        totalRewards: Nat;//Total Token reward in this pool
+        rewardTokenFee : Nat; // Fee when withdraw rewards.
+
+        stakingSymbol: Text; //CANIC NFT
+        stakingToken: Text; //Canister of NFT
+        stakingStandard: Text; //Ext
+        rewardSymbol: Text; //Ex: XCANIC
+        rewardToken: Text; //Canister ID
+        rewardStandard: Text; // DIP20
+        rewardTokenDecimals: Nat;
+        rewardPerSecond: Nat; //Calculate by second
+    };
 }
