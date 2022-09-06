@@ -39,22 +39,6 @@ shared ({ caller = creator }) actor class CanicNFT(
   let NFTCanister : Actor.NFT = actor("mxftc-eyaaa-aaaap-qanga-cai");
 
   //Pool INIT
-
-  // private stable var name : Text = "Staking Pool";
-  // private stable var endTime : Time.Time = Time.now();
-  // private stable var rewardPerSecond : Nat = 0;
-  // private stable var rewardStandard : Text = null;
-  // private stable var rewardSymboy : Text = null;
-  // private stable var rewardToken : Text = null;
-  // private stable var rewardTokenDecimals : Nat = 8;
-  // private stable var rewardTokenFee : Nat = 0;
-  // private stable var stakingStandard : Text = null;
-  // private stable var stakingSymbol : Text = null;
-  // private stable var stakingToken : Text = null;
-  // private stable var startTime : Time.Time = Time.now();
-  // private stable var totalRewards : Nat = 0;
-
-  // Stable
   private stable var _stakingPool      : Types.StakingPool = {
       name = "Staking Pool";
       endTime = Time.now();
@@ -71,40 +55,58 @@ shared ({ caller = creator }) actor class CanicNFT(
       totalRewards  = 0;
   };
   private stable var _admins              : [Principal] = [creator];
-  private stable var _transactions        : [(Nat, Types.Transaction)] = []; //NFT transactions
-  private stable var _harvestTransactions : [(Nat, Types.HarvestTransaction)] = []; //Harvest transactions
-  private stable var _stakings            : [(Ext.TokenIndex, Types.Staking)] = []; //Staking
-  private stable var _pendingStakings     : [(Ext.TokenIndex, Types.Staking)] = []; //Pending Staking
   private stable var _nextSubAccount      : Nat = 0;
   private stable var _tranIdx             : Nat = 0;
   private stable var _harvestIdx          : Nat = 0;
 
-  
+  // Heartbeat - System cronjob
+  private stable var s_heartbeatIntervalSeconds : Nat = 5;//Distribute every 1 minute
+  private stable var s_heartbeatLastBeat : Int = 0;
+  private stable var s_heartbeatOn : Bool = true;
+
+  // Pool setting
+  private stable var _totalWeight : Nat = 0; //This is base on NRI, Tier...
+  private stable var _totalRewarded : Nat64 = 0; //Total rewarded counter.
+
+
 
   // Unfinalized transactions.
   private var admins : Buffer.Buffer<Principal> = Buffer.Buffer(0);
 
-  private var pendingStakings = HashMap.HashMap<Ext.TokenIndex, Types.Staking>(
-      _pendingStakings.size(),
-      Ext.TokenIndex.equal,
-      Ext.TokenIndex.hash
-  );
-  private var stakings = HashMap.HashMap<Ext.TokenIndex, Types.Staking>(
-      _stakings.size(),
-      Ext.TokenIndex.equal,
-      Ext.TokenIndex.hash
-  );
-  private var transactions = HashMap.HashMap<Nat, Types.Transaction>(
-      _transactions.size(),
-      Nat.equal,
-      Nat32.fromNat
-  );
-  private var harvestTransactions = HashMap.HashMap<Nat, Types.HarvestTransaction>(
-      _harvestTransactions.size(),
-      Nat.equal,
-      Nat32.fromNat
-  );
+  private stable var _pendingStakings     : [(Ext.TokenIndex, Types.Staking)] = []; //Pending Staking
+  private var pendingStakings             : HashMap.HashMap<Ext.TokenIndex, Types.Staking> = HashMap.fromIter(_pendingStakings.vals(), 0, Ext.TokenIndex.equal, Ext.TokenIndex.hash);
+  
+  private stable var _stakings            : [(Ext.TokenIndex, Types.Staking)] = []; //Staking
+  private var stakings                    : HashMap.HashMap<Ext.TokenIndex, Types.Staking> = HashMap.fromIter(_stakings.vals(), 0, Ext.TokenIndex.equal, Ext.TokenIndex.hash);
 
+  private stable var _transactions        : [(Nat, Types.Transaction)] = []; //NFT transactions
+  private var transactions                : HashMap.HashMap<Nat, Types.Transaction> = HashMap.fromIter(_transactions.vals(), 0, Nat.equal, Nat32.fromNat);
+
+  private stable var _harvestTransactions : [(Nat, Types.HarvestTransaction)] = []; //Harvest transactions
+  private var harvestTransactions         : HashMap.HashMap<Nat, Types.HarvestTransaction> = HashMap.fromIter(_harvestTransactions.vals(), 0, Nat.equal, Nat32.fromNat);
+
+  private stable var _pendingHarvests      : [(Nat, Types.HarvestTransaction)] = []; //Harvest transactions
+  private var pendingHarvests              : HashMap.HashMap<Nat, Types.HarvestTransaction> = HashMap.fromIter(_pendingHarvests.vals(), 0, Nat.equal, Nat32.fromNat);
+
+
+  /*
+  * upgrade functions
+  */
+  system func preupgrade() {
+    _stakings             := Iter.toArray(stakings.entries());
+    _pendingStakings      := Iter.toArray(pendingStakings.entries());
+    _transactions         := Iter.toArray(transactions.entries());
+    _harvestTransactions  := Iter.toArray(harvestTransactions.entries());
+    _pendingHarvests      := Iter.toArray(pendingHarvests.entries());
+  };
+
+  system func postupgrade() {
+    _stakings             := [];
+    _pendingStakings      := [];
+    _transactions         := [];
+    _harvestTransactions  := [];
+    _pendingHarvests       := [];
+  };
 //Admin function
   // public func isAdmin(p : Principal) : async Bool {
   //     for (a in admins.vals()) {
@@ -113,20 +115,50 @@ shared ({ caller = creator }) actor class CanicNFT(
   //     false;
   // };
 
+  ////////////////
+  // Heartbeat //
+  //////////////
+
+
+  system func heartbeat() : async () {
+      if (not s_heartbeatOn) return;
+
+      // Limit heartbeats
+      let now = Time.now();
+      if (now - s_heartbeatLastBeat < s_heartbeatIntervalSeconds * 1_000_000_000) return;
+      s_heartbeatLastBeat := now;
+      await cronUpdateEarned();
+      // Run jobs
+      // await _MarketPlace.cronDisbursements();
+      // await _MarketPlace.cronSettlements();
+  };
+
   //Update Canister Pool
   public shared ({ caller }) func updatePool(request: Types.StakingPool) : async Result.Result<(), Ext.CommonError> {
-      assert(caller == creator);
+      // assert(caller == creator);
       _stakingPool := request;
       #ok();
   };
+  public shared ({ caller }) func heartbeatSetInterval (
+      i : Nat
+  ) : async () {
+      assert(caller == creator);
+      s_heartbeatIntervalSeconds := i;
+  };
 
+  public shared ({ caller }) func heartbeatSwitch (
+      on : Bool
+  ) : async () {
+      assert(caller == creator);
+      s_heartbeatOn := on;
+  };
   public shared ({ caller}) func poolInfo() : async Types.StakingPool {
       _stakingPool;
   };
 
 
-  public shared ({ caller}) func getPid() : async Result.Result<Text, Ext.CommonError> {
-      #ok(Principal.toText(cid));
+  public query func stats() : async Nat {
+      _totalWeight;
   };
 
   //Show Cycles
@@ -204,6 +236,9 @@ shared ({ caller = creator }) actor class CanicNFT(
                 case (#ok(owner)){
                   if(AccountIdentifier.fromText(owner) == stakeAddress){
                     stakings.put(index, staking);
+                    
+                    _totalWeight += staking.multiply; //This is increase weight of pool, do not forget.
+
                     pendingStakings.delete(index);
                     //3. Write transaction
                     transactions.put(_tranIdx, {
@@ -276,7 +311,7 @@ shared ({ caller = creator }) actor class CanicNFT(
             if(staking.staker == staker){
               //1. Transfer back to staker
               let subaccount = Functions.getNextSubAccount(staking.stakeSubAccount);
-              await NFTCanister.transfer({
+              switch(await NFTCanister.transfer({
                 to          = #address(staker);
                 from        = #address(staking.stakeAddress);
                 subaccount  = subaccount;//Sent from stake address subaccount
@@ -284,23 +319,40 @@ shared ({ caller = creator }) actor class CanicNFT(
                 notify      = false;
                 memo        = Blob.fromArray([]:[Nat8]);
                 amount      = 1;
-              });
-              // state._Tokens.transfer(index, stake_address, staker);
-              //2. Delete staking list
-              stakings.delete(index);
+              })){
+                case (#err(_)){
+                  return #err(#Other("An error occurred while transferring NFT"));
+                };
+                case (#ok(_)){
+                //2. Delete staking list
+                stakings.delete(index);
 
-              //3. Write transaction
-              transactions.put(_tranIdx, {
-                token   = request.token;
-                from    = staking.stakeAddress;
-                account = staking.stakeSubAccount;
-                to      = staking.staker;
-                method  = "Unstake";
-                time    = Time.now();
-              });
-              _tranIdx += 1;
+                _totalWeight -= staking.multiply; //This is increase weight of pool, do not forget.
 
-              return #ok();
+                //3. Write transaction
+                transactions.put(_tranIdx, {
+                  token   = request.token;
+                  from    = staking.stakeAddress;
+                  account = staking.stakeSubAccount;
+                  to      = staking.staker;
+                  method  = "Unstake";
+                  time    = Time.now();
+                });
+
+                //4. Add earned to pendingHarvest - Use transIdx from transaction to referer
+                pendingHarvests.put(_tranIdx, {
+                      from    = cid;//Send from canister pool
+                      to      = staking.principal;
+                      time    = Time.now();
+                      amount  = staking.earned;
+                });
+
+                //5. Increase transid
+                _tranIdx += 1;
+
+                return #ok();
+                }
+              }
             }else{
               return #err(#Other("Unauthorized"));
             }
@@ -315,7 +367,7 @@ public query func getTrans () : async Types.TransactionResponse {
 };
 //Get harvest transaction
 public query func getHarvestTrans () : async Types.HarvestTransactionResponse {
-    Iter.toArray(harvestTransactions.entries());
+    Iter.toArray(pendingHarvests.entries());
 };
 //Get my stake
 public query func getMyStakings(address: Ext.AccountIdentifier) : async Types.StakingResponse {
@@ -340,39 +392,35 @@ func _unpackTokenIdentifier (
     };
 };
 
+private func cronUpdateEarned () : async () {
+      s_heartbeatLastBeat := Time.now();
+      label queue for ((index, staking) in stakings.entries()) {
+          ignore calculateEarning(index, staking); //Caculate to distribute -> earned
+      };
+  };
 
-    /*
-    * upgrade functions
-    */
-    system func preupgrade() {
-      _stakings             := Iter.toArray(stakings.entries());
-      _pendingStakings      := Iter.toArray(pendingStakings.entries());
-      _transactions         := Iter.toArray(transactions.entries());
-      _harvestTransactions  := Iter.toArray(harvestTransactions.entries());
-    };
-
-    system func postupgrade() {
-      stakings := HashMap.HashMap<Ext.TokenIndex, Types.Staking>(
-          _stakings.size(),
-          Ext.TokenIndex.equal,
-          Ext.TokenIndex.hash
-      );
-      pendingStakings := HashMap.HashMap<Ext.TokenIndex, Types.Staking>(
-          _pendingStakings.size(),
-          Ext.TokenIndex.equal,
-          Ext.TokenIndex.hash
-      );
-      transactions := HashMap.HashMap<Nat, Types.Transaction>(
-          _transactions.size(),
-          Nat.equal,
-          Nat32.fromNat
-      );
-      harvestTransactions := HashMap.HashMap<Nat, Types.HarvestTransaction>(
-          _harvestTransactions.size(), 
-          Nat.equal,
-          Nat32.fromNat
-      );
-
-    };
+private func calculateEarning (index: Ext.TokenIndex, staking: Types.Staking): async () {
+  let timeNow = Time.now();
+  let stakedSecond = timeNow-staking.harvestTime;
+  if(stakedSecond < s_heartbeatIntervalSeconds*1_000_000_000) return;
+  if(_totalWeight <= 0 or _stakingPool.rewardPerSecond <= 0) return;//Check before add earned, make sure Pool active
+  let earnedPerSecond = (staking.multiply*_stakingPool.rewardPerSecond)/_totalWeight;
+  let earnedInBlock: Int = (stakedSecond/1_000_000_000)*earnedPerSecond;
+  let totalEarned  = staking.earned + Nat64.fromIntWrap(earnedInBlock);
+  
+  //Update record.
+  stakings.put(index, {
+                stakeAddress = staking.stakeAddress;
+                stakeSubAccount = staking.stakeSubAccount;
+                staker = staking.staker;
+                principal = staking.principal;
+                stakeTime = staking.stakeTime;
+                harvestTime = timeNow;
+                earned = totalEarned;
+                multiply = staking.multiply; //Depend on NRI, Tier...etc
+              });
+  //Update total rewarded
+  _totalRewarded += Nat64.fromIntWrap(earnedInBlock);
+}
 
 };

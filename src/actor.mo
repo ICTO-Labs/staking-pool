@@ -28,7 +28,7 @@ module {
     public type NftBearer = Ext.TokenIdentifier;
     public type NFT = actor {
         // Transfers NFT from .
-        transfer : shared (NftTransferArgs) -> async ();
+        transfer : shared (NftTransferArgs) -> async Ext.Core.TransferResponse;
         bearer: shared (NftBearer) -> async Ext.NonFungible.BearerResponse;
 
     };

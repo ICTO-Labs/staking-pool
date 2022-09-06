@@ -54,10 +54,9 @@ module {
 
     //Token transaction
     public type HarvestTransaction = {
-        // id          : Nat;
         from        : Principal;
         to          : Principal;
-        amount      : Nat;
+        amount      : Nat64;
         time        : Time.Time;
     };
 
