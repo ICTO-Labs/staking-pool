@@ -2,6 +2,7 @@ import Ext "mo:ext/Ext";
 import Text "mo:base/Text";
 import Result "mo:base/Result";
 import Principal "mo:base/Principal";
+import Nat "mo:base/Nat";
 import Nat8 "mo:base/Nat8";
 import Blob "mo:base/Blob";
 
@@ -30,7 +31,26 @@ module {
         // Transfers NFT from .
         transfer : shared (NftTransferArgs) -> async Ext.Core.TransferResponse;
         bearer: shared (NftBearer) -> async Ext.NonFungible.BearerResponse;
-
     };
+
+    //Transfer Token - DIP20
+    public type TxReceipt = {
+        #Ok : Nat;
+        #Err : {
+            #InsufficientAllowance;
+            #InsufficientBalance;
+            #ErrorOperationStyle;
+            #Unauthorized;
+            #LedgerTrap;
+            #ErrorTo;
+            #Other : Text;
+            #BlockUsed;
+            #AmountTooSmall;
+        };
+  };
+    public type Token = actor{
+        transfer : shared (Principal, Nat) -> async TxReceipt;
+        balanceOf : shared query Principal -> async Nat;
+    }
 
 }

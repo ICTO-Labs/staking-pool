@@ -16,6 +16,10 @@ module {
         token            : Ext.TokenIdentifier;
     };
 
+    public type HarvestRequest = {
+        from_subaccount   : ?Ext.SubAccount;
+    };
+
     public type StakingResponse = [(
         Ext.TokenIndex,
         Staking
@@ -76,4 +80,11 @@ module {
         rewardTokenDecimals: Nat;
         rewardPerSecond: Nat; //Calculate by second
     };
+
+    public type PoolStats = {
+        totalNFTStaked: Nat;
+        totalRewarded: Nat64;
+        earned: Nat64; //Check earned of user
+        staked: Nat; //Check total NFT staked by user
+    }
 }

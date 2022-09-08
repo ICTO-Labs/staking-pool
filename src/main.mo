@@ -31,12 +31,11 @@ import Ext "mo:ext/Ext";
 import Types "types";
 import Functions "functions";
 import Actor "actor";
-
+import Data "data";
 shared ({ caller = creator }) actor class CanicNFT(
     cid    : Principal, //This is Principal of this Canister.
 ) = {
 
-  let NFTCanister : Actor.NFT = actor("mxftc-eyaaa-aaaap-qanga-cai");
 
   //Pool INIT
   private stable var _stakingPool      : Types.StakingPool = {
@@ -54,6 +53,12 @@ shared ({ caller = creator }) actor class CanicNFT(
       startTime  = Time.now();
       totalRewards  = 0;
   };
+
+  //Define actor canister
+  let NFTCanister : Actor.NFT = actor(_stakingPool.stakingToken);//Staking Canister: "mxftc-eyaaa-aaaap-qanga-cai"
+  let TokenCanister : Actor.Token = actor(_stakingPool.rewardToken);//"qi26q-6aaaa-aaaap-qapeq-cai");//Reward Canister
+
+
   private stable var _admins              : [Principal] = [creator];
   private stable var _nextSubAccount      : Nat = 0;
   private stable var _tranIdx             : Nat = 0;
@@ -87,6 +92,11 @@ shared ({ caller = creator }) actor class CanicNFT(
 
   private stable var _pendingHarvests      : [(Nat, Types.HarvestTransaction)] = []; //Harvest transactions
   private var pendingHarvests              : HashMap.HashMap<Nat, Types.HarvestTransaction> = HashMap.fromIter(_pendingHarvests.vals(), 0, Nat.equal, Nat32.fromNat);
+
+
+  //Data of Tier
+
+  private var _TierData : [(Text)] = Data.getData();
 
 
   /*
@@ -156,10 +166,26 @@ shared ({ caller = creator }) actor class CanicNFT(
       _stakingPool;
   };
 
+//Get my stats
+public query func poolStats(address: Ext.AccountIdentifier) : async Types.PoolStats {
+    var _myStaked : Nat = 0;
+    var _myEarned : Nat64 = 0;
+    for ((idx, stake) in stakings.entries()) {
+      if(stake.staker == address){
+          _myEarned += stake.earned;
+          _myStaked += 1;
+      };
+    };
 
-  public query func stats() : async Nat {
-      _totalWeight;
-  };
+    let _poolStats = {
+        totalNFTStaked = stakings.size();
+        totalRewarded = _totalRewarded;
+        staked = _myStaked;
+        earned = _myEarned;
+    };
+   
+    _poolStats;
+};
 
   //Show Cycles
   public query func getCycles() : async Text {
@@ -184,33 +210,59 @@ shared ({ caller = creator }) actor class CanicNFT(
       #ok(stakeAddress);
   };
 
+//Harvest
+public shared ({ caller }) func harvest(request: Types.HarvestRequest) : async Result.Result<Nat, Ext.CommonError>  {
+    let staker = AccountBlob.toText(AccountBlob.fromPrincipal(caller, request.from_subaccount));
+    var _processNum : Nat = 0;
+    for ((idx, stake) in stakings.entries()) {
+        if(stake.staker == staker){
+            ignore processHarvest(idx, stake); //Process harvest.
+            _processNum += 1;
+          //tokens := Array.append(tokens, [(idx, stake)]);
+        };
+    };
+    #ok(_processNum);
+};
+
   //Staking
   public shared ({ caller }) func stake (
         request : Types.StakeRequest,
     ) : async Result.Result<Text, Ext.CommonError> {
-    //Decode token
-    let index = switch (Ext.TokenIdentifier.decode(request.token)) {
-        case (#err(_)) { return #err(#InvalidToken(request.token)); };
-        case (#ok(_, tokenIndex)) { tokenIndex; };
+    //1. Check time of Pool
+    let timeNow = Time.now();
+    if(timeNow < _stakingPool.startTime){
+      #err(#Other("This Pool is not started!"));
+    }else if(timeNow > _stakingPool.endTime){
+      #err(#Other("This Pool has been ended!"));
+    }else{
+      //Decode token
+      let index = switch (Ext.TokenIdentifier.decode(request.token)) {
+          case (#err(_)) { return #err(#InvalidToken(request.token)); };
+          case (#ok(_, tokenIndex)) { tokenIndex; };
+      };
+      let staker = AccountBlob.toText(AccountBlob.fromPrincipal(caller, request.from_subaccount));
+      _nextSubAccount += 1;
+      let subaccount = Functions.getNextSubAccount(_nextSubAccount);
+      let stakeAddress : Ext.AccountIdentifier = AccountBlob.toText(AccountBlob.fromPrincipal(cid, ?subaccount));
+
+      //get Multiplier from Tier data 
+      let _tier = _TierData.get(Nat32.toNat(index));
+      let _multiply = Data.getMultiply(_tier);
+      //Add to pending
+      pendingStakings.put(index, {
+        stakeAddress = stakeAddress;
+        stakeSubAccount = _nextSubAccount;
+        staker = staker;
+        principal = caller;
+        stakeTime = Time.now();
+        harvestTime = Time.now();
+        earned = 0;
+        multiply = _multiply; //Depend on NRI, Tier...etc
+      });
+
+      #ok(stakeAddress);
     };
-    let staker = AccountBlob.toText(AccountBlob.fromPrincipal(caller, request.from_subaccount));
-    _nextSubAccount += 1;
-    let subaccount = Functions.getNextSubAccount(_nextSubAccount);
-    let stakeAddress : Ext.AccountIdentifier = AccountBlob.toText(AccountBlob.fromPrincipal(cid, ?subaccount));
-
-    //Add to pending
-    pendingStakings.put(index, {
-      stakeAddress = stakeAddress;
-      stakeSubAccount = _nextSubAccount;
-      staker = staker;
-      principal = caller;
-      stakeTime = Time.now();
-      harvestTime = Time.now();
-      earned = 0;
-      multiply = 1; //Depend on NRI, Tier...etc
-    });
-
-    #ok(stakeAddress);
+    
   };
 
   //Settle - Finalyze staking
@@ -269,6 +321,11 @@ shared ({ caller = creator }) actor class CanicNFT(
       // }else{
       //   #err(#Other("Not received!"));
       // }
+  };
+
+  public shared({ caller }) func tokenTransfer (to: Principal, amount: Nat) : async Result.Result<Nat, Ext.CommonError>{
+      assert(caller == creator);
+      await transferToken(to, amount);
   };
 
   public shared ({ caller }) func safeTransfer (
@@ -365,6 +422,16 @@ shared ({ caller = creator }) actor class CanicNFT(
 public query func getTrans () : async Types.TransactionResponse {
     Iter.toArray(transactions.entries());
 };
+
+//Get Pool Balance
+public shared ({ caller }) func currentTime () : async Time.Time {
+    Time.now();
+};
+//Get Pool Balance
+public shared ({ caller }) func getBalance () : async Nat {
+    await TokenCanister.balanceOf(cid);
+};
+
 //Get harvest transaction
 public query func getHarvestTrans () : async Types.HarvestTransactionResponse {
     Iter.toArray(pendingHarvests.entries());
@@ -402,13 +469,19 @@ private func cronUpdateEarned () : async () {
 private func calculateEarning (index: Ext.TokenIndex, staking: Types.Staking): async () {
   let timeNow = Time.now();
   let stakedSecond = timeNow-staking.harvestTime;
+
+  //Check pool active time.
+  if(timeNow < _stakingPool.startTime) return;//
+  if(timeNow > _stakingPool.endTime) return;//
+
+  //Checking condition
   if(stakedSecond < s_heartbeatIntervalSeconds*1_000_000_000) return;
   if(_totalWeight <= 0 or _stakingPool.rewardPerSecond <= 0) return;//Check before add earned, make sure Pool active
   let earnedPerSecond = (staking.multiply*_stakingPool.rewardPerSecond)/_totalWeight;
   let earnedInBlock: Int = (stakedSecond/1_000_000_000)*earnedPerSecond;
   let totalEarned  = staking.earned + Nat64.fromIntWrap(earnedInBlock);
   
-  //Update record.
+  //3. Update record.
   stakings.put(index, {
                 stakeAddress = staking.stakeAddress;
                 stakeSubAccount = staking.stakeSubAccount;
@@ -421,6 +494,86 @@ private func calculateEarning (index: Ext.TokenIndex, staking: Types.Staking): a
               });
   //Update total rewarded
   _totalRewarded += Nat64.fromIntWrap(earnedInBlock);
-}
+
+};
+
+//force process when user harvest
+private func processHarvest (index: Ext.TokenIndex, staking: Types.Staking): async () {
+  let timeNow = Time.now();
+  let stakedSecond = timeNow-staking.harvestTime;
+
+  let earnedPerSecond = (staking.multiply*_stakingPool.rewardPerSecond)/_totalWeight;
+  let earnedInBlock: Int = (stakedSecond/1_000_000_000)*earnedPerSecond;
+  let totalEarned  = staking.earned + Nat64.fromIntWrap(earnedInBlock);
+  
+  //3. Update record.
+  stakings.put(index, {
+                stakeAddress = staking.stakeAddress;
+                stakeSubAccount = staking.stakeSubAccount;
+                staker = staking.staker;
+                principal = staking.principal;
+                stakeTime = staking.stakeTime;
+                harvestTime = timeNow;
+                earned = 0; //Reset earned when harvest
+                multiply = staking.multiply; //Depend on NRI, Tier...etc
+              });
+  //Update total rewarded
+  _totalRewarded += Nat64.fromIntWrap(earnedInBlock);
+
+  //4. Add earned to pendingHarvest - Use transIdx from transaction to referer
+    pendingHarvests.put(_tranIdx, {
+          from    = cid;//Send from canister pool
+          to      = staking.principal;
+          time    = timeNow;
+          amount  = totalEarned;
+    });
+    //5. Increase transid
+    _tranIdx += 1;
+};
+
+// private func processPendingHarvest(): async Result.Result<Nat, Ext.CommonError>{
+//     for ((txId, pendingHarvest) in pendingHarvests.entries()) {
+//         // await transferToken(pendingHarvest.to, pendingHarvest.amount);
+//     };
+// };
+//Important Function - Transfer Token to receipts
+private func transferToken(to: Principal, amount: Nat): async Result.Result<Nat, Ext.CommonError>{
+    switch(await TokenCanister.transfer(to, amount)){
+      case(#Ok(transId)){
+        #ok(transId);
+      };
+      case(#Err(e)) {
+        switch (e) {
+            case (#AmountTooSmall){
+                 #err(#Other("AmountTooSmall"));
+            };
+            case (#BlockUsed){
+                 #err(#Other("BlockUsed"));
+            };
+            case (#ErrorOperationStyle){
+                 #err(#Other("ErrorOperationStyle"));
+            };
+            case (#ErrorTo){
+                 #err(#Other("ErrorTo"));
+            };
+            case (#InsufficientAllowance){
+                 #err(#Other("InsufficientAllowance"));
+            };
+            case (#InsufficientBalance){
+                 #err(#Other("InsufficientBalance"));
+            };
+            case (#LedgerTrap){
+                 #err(#Other("LedgerTrap"));
+            };
+            case (#Other(m)){
+                 #err(#Other("Other: " # m));
+            };
+            case (#Unauthorized){
+                 #err(#Other("Unauthorized"));
+            };
+        }
+      }
+    }
+};
 
 };
