@@ -15,12 +15,15 @@ import Iter "mo:base/Iter";
 import Array "mo:base/Array";
 import Buffer "mo:base/Buffer";
 import Cycles "mo:base/ExperimentalCycles";
+import Error "mo:base/Error";
 
 import Option "mo:base/Option";
 import Order "mo:base/Order";
 import Blob "mo:base/Blob";
 import Bool "mo:base/Bool";
 import Nat "mo:base/Nat";
+import Float "mo:base/Float";
+import Int "mo:base/Int";
 import Nat8 "mo:base/Nat8";
 import Nat32 "mo:base/Nat32";
 import Nat64 "mo:base/Nat64";
@@ -74,6 +77,7 @@ shared ({ caller = creator }) actor class CanicNFT(
   private stable var _totalRewarded : Nat64 = 0; //Total rewarded counter.
 
 
+  private stable var _minimumHarvest: Nat = 1_000_000;//Minimum 1 Token
 
   // Unfinalized transactions.
   private var admins : Buffer.Buffer<Principal> = Buffer.Buffer(0);
@@ -90,8 +94,8 @@ shared ({ caller = creator }) actor class CanicNFT(
   private stable var _harvestTransactions : [(Nat, Types.HarvestTransaction)] = []; //Harvest transactions
   private var harvestTransactions         : HashMap.HashMap<Nat, Types.HarvestTransaction> = HashMap.fromIter(_harvestTransactions.vals(), 0, Nat.equal, Nat32.fromNat);
 
-  private stable var _pendingHarvests      : [(Nat, Types.HarvestTransaction)] = []; //Harvest transactions
-  private var pendingHarvests              : HashMap.HashMap<Nat, Types.HarvestTransaction> = HashMap.fromIter(_pendingHarvests.vals(), 0, Nat.equal, Nat32.fromNat);
+  private stable var _pendingHarvests      : [(Nat, Types.HarvestPendingTransaction)] = []; //Harvest transactions
+  private var pendingHarvests              : HashMap.HashMap<Nat, Types.HarvestPendingTransaction> = HashMap.fromIter(_pendingHarvests.vals(), 0, Nat.equal, Nat32.fromNat);
 
 
   //Data of Tier
@@ -137,15 +141,20 @@ shared ({ caller = creator }) actor class CanicNFT(
       let now = Time.now();
       if (now - s_heartbeatLastBeat < s_heartbeatIntervalSeconds * 1_000_000_000) return;
       s_heartbeatLastBeat := now;
-      await cronUpdateEarned();
+      try{
+        await cronUpdateEarned();
+        await processPendingHarvest();//Send payment 
+      }catch(e){
+        //Nothing
+      }
       // Run jobs
       // await _MarketPlace.cronDisbursements();
       // await _MarketPlace.cronSettlements();
   };
 
-  //Update Canister Pool
+
   public shared ({ caller }) func updatePool(request: Types.StakingPool) : async Result.Result<(), Ext.CommonError> {
-      // assert(caller == creator);
+      assert(caller == creator);
       _stakingPool := request;
       #ok();
   };
@@ -155,6 +164,13 @@ shared ({ caller = creator }) actor class CanicNFT(
       assert(caller == creator);
       s_heartbeatIntervalSeconds := i;
   };
+  //Set minimum harvest
+  public shared ({ caller }) func setMinimumTokenHarvest (
+      i : Nat
+  ) : async () {
+      assert(caller == creator);
+      _minimumHarvest := i;
+  };
 
   public shared ({ caller }) func heartbeatSwitch (
       on : Bool
@@ -162,7 +178,7 @@ shared ({ caller = creator }) actor class CanicNFT(
       assert(caller == creator);
       s_heartbeatOn := on;
   };
-  public shared ({ caller}) func poolInfo() : async Types.StakingPool {
+  public query func poolInfo() : async Types.StakingPool {
       _stakingPool;
   };
 
@@ -170,26 +186,38 @@ shared ({ caller = creator }) actor class CanicNFT(
 public query func poolStats(address: Ext.AccountIdentifier) : async Types.PoolStats {
     var _myStaked : Nat = 0;
     var _myEarned : Nat64 = 0;
+    var _myWeight : Nat = 0;
     for ((idx, stake) in stakings.entries()) {
       if(stake.staker == address){
           _myEarned += stake.earned;
           _myStaked += 1;
+          _myWeight += stake.multiply;
       };
     };
 
     let _poolStats = {
         totalNFTStaked = stakings.size();
         totalRewarded = _totalRewarded;
+        totalWeight = _totalWeight;
         staked = _myStaked;
         earned = _myEarned;
+        myWeight = _myWeight;
+        minimumHarvest = _minimumHarvest;
+        intvalProcess = s_heartbeatIntervalSeconds;
+        lastProcessTime = s_heartbeatLastBeat;
     };
    
     _poolStats;
 };
 
   //Show Cycles
+  public query func getHeartbeatStatus() : async Bool {
+     s_heartbeatOn;
+  };
+
+  //Show Cycles
   public query func getCycles() : async Text {
-    Nat.toText(Cycles.balance() / 1_000_000_000_000) # "T";
+    Nat.toText(Cycles.balance());
   };
   //Show all stakings
   public query func getStakings() : async Types.StakingResponse {
@@ -214,9 +242,9 @@ public query func poolStats(address: Ext.AccountIdentifier) : async Types.PoolSt
 public shared ({ caller }) func harvest(request: Types.HarvestRequest) : async Result.Result<Nat, Ext.CommonError>  {
     let staker = AccountBlob.toText(AccountBlob.fromPrincipal(caller, request.from_subaccount));
     var _processNum : Nat = 0;
-    for ((idx, stake) in stakings.entries()) {
+    label queue for ((idx, stake) in stakings.entries()) {
         if(stake.staker == staker){
-            ignore processHarvest(idx, stake); //Process harvest.
+            ignore await processHarvest(idx, stake); //Process harvest.
             _processNum += 1;
           //tokens := Array.append(tokens, [(idx, stake)]);
         };
@@ -323,10 +351,10 @@ public shared ({ caller }) func harvest(request: Types.HarvestRequest) : async R
       // }
   };
 
-  public shared({ caller }) func tokenTransfer (to: Principal, amount: Nat) : async Result.Result<Nat, Ext.CommonError>{
-      assert(caller == creator);
-      await transferToken(to, amount);
-  };
+  // public shared({ caller }) func tokenTransfer (to: Principal, amount: Nat) : async Result.Result<Nat, Ext.CommonError>{
+  //     assert(caller == creator);
+  //     // await transferToken(to, amount);
+  // };
 
   public shared ({ caller }) func safeTransfer (
     token: Ext.TokenIdentifier,
@@ -397,13 +425,15 @@ public shared ({ caller }) func harvest(request: Types.HarvestRequest) : async R
                 });
 
                 //4. Add earned to pendingHarvest - Use transIdx from transaction to referer
-                pendingHarvests.put(_tranIdx, {
-                      from    = cid;//Send from canister pool
-                      to      = staking.principal;
-                      time    = Time.now();
-                      amount  = staking.earned;
-                });
-
+                if(Nat64.toNat(staking.earned) >= _minimumHarvest){
+                    pendingHarvests.put(_tranIdx, {
+                          from    = cid;//Send from canister pool
+                          to      = staking.principal;
+                          time    = Time.now();
+                          amount  = Nat64.toNat(staking.earned);
+                    });
+                };
+                
                 //5. Increase transid
                 _tranIdx += 1;
 
@@ -434,6 +464,11 @@ public shared ({ caller }) func getBalance () : async Nat {
 
 //Get harvest transaction
 public query func getHarvestTrans () : async Types.HarvestTransactionResponse {
+    Iter.toArray(harvestTransactions.entries());
+};
+
+//Get harvest pending transaction
+public query func getPendingHarvestTrans () : async Types.HarvestPendingResponse {
     Iter.toArray(pendingHarvests.entries());
 };
 //Get my stake
@@ -461,8 +496,8 @@ func _unpackTokenIdentifier (
 
 private func cronUpdateEarned () : async () {
       s_heartbeatLastBeat := Time.now();
-      label queue for ((index, staking) in stakings.entries()) {
-          ignore calculateEarning(index, staking); //Caculate to distribute -> earned
+    label queue for ((index, staking) in stakings.entries()) {
+          ignore await calculateEarning(index, staking); //Caculate to distribute -> earned
       };
   };
 
@@ -476,9 +511,11 @@ private func calculateEarning (index: Ext.TokenIndex, staking: Types.Staking): a
 
   //Checking condition
   if(stakedSecond < s_heartbeatIntervalSeconds*1_000_000_000) return;
-  if(_totalWeight <= 0 or _stakingPool.rewardPerSecond <= 0) return;//Check before add earned, make sure Pool active
+  //if(_totalWeight <= 0 or _stakingPool.rewardPerSecond <= 0) return;//Check before add earned, make sure Pool active
   let earnedPerSecond = (staking.multiply*_stakingPool.rewardPerSecond)/_totalWeight;
   let earnedInBlock: Int = (stakedSecond/1_000_000_000)*earnedPerSecond;
+
+// if(Nat64.toNat(Nat64.fromIntWrap(earnedInBlock)) < _minimumHarvest) return; //Accept minimum token to harvest
   let totalEarned  = staking.earned + Nat64.fromIntWrap(earnedInBlock);
   
   //3. Update record.
@@ -503,43 +540,68 @@ private func processHarvest (index: Ext.TokenIndex, staking: Types.Staking): asy
   let stakedSecond = timeNow-staking.harvestTime;
 
   let earnedPerSecond = (staking.multiply*_stakingPool.rewardPerSecond)/_totalWeight;
+  // let earnedInBlock = Int.abs(Float.toInt(Float.floor((stakedSecond/1_000_000_000)*earnedPerSecond)));
+  // let earnedPerSecond = (staking.multiply*_stakingPool.rewardPerSecond)/_totalWeight;
   let earnedInBlock: Int = (stakedSecond/1_000_000_000)*earnedPerSecond;
-  let totalEarned  = staking.earned + Nat64.fromIntWrap(earnedInBlock);
-  
-  //3. Update record.
-  stakings.put(index, {
-                stakeAddress = staking.stakeAddress;
-                stakeSubAccount = staking.stakeSubAccount;
-                staker = staking.staker;
-                principal = staking.principal;
-                stakeTime = staking.stakeTime;
-                harvestTime = timeNow;
-                earned = 0; //Reset earned when harvest
-                multiply = staking.multiply; //Depend on NRI, Tier...etc
-              });
-  //Update total rewarded
-  _totalRewarded += Nat64.fromIntWrap(earnedInBlock);
 
-  //4. Add earned to pendingHarvest - Use transIdx from transaction to referer
-    pendingHarvests.put(_tranIdx, {
-          from    = cid;//Send from canister pool
-          to      = staking.principal;
-          time    = timeNow;
-          amount  = totalEarned;
-    });
-    //5. Increase transid
-    _tranIdx += 1;
+  if(Nat64.toNat(Nat64.fromIntWrap(earnedInBlock)) >= _minimumHarvest){
+    let totalEarned  = staking.earned + Nat64.fromIntWrap(earnedInBlock);
+    
+    // let earnedInBlock = Float.fromInt((stakedSecond/1_000_000_000)*earnedPerSecond);
+    // let totalEarned  = staking.earned + Nat64.fromIntWrap(Float.toInt(Float.floor(earnedInBlock)));
+
+
+    //3. Update record.
+    stakings.put(index, {
+                  stakeAddress = staking.stakeAddress;
+                  stakeSubAccount = staking.stakeSubAccount;
+                  staker = staking.staker;
+                  principal = staking.principal;
+                  stakeTime = staking.stakeTime;
+                  harvestTime = timeNow;
+                  earned = 0; //Reset earned when harvest
+                  multiply = staking.multiply; //Depend on NRI, Tier...etc
+                });
+    //Update total rewarded
+    _totalRewarded += Nat64.fromIntWrap(earnedInBlock);
+
+    //4. Add earned to pendingHarvest - Use transIdx from transaction to referer
+      pendingHarvests.put(_tranIdx, {
+            from    = cid;//Send from canister pool
+            to      = staking.principal;
+            time    = timeNow;
+            amount  = Nat64.toNat(totalEarned);
+      });
+      //5. Increase transid
+      _tranIdx += 1;
+  }
 };
 
-// private func processPendingHarvest(): async Result.Result<Nat, Ext.CommonError>{
-//     for ((txId, pendingHarvest) in pendingHarvests.entries()) {
-//         // await transferToken(pendingHarvest.to, pendingHarvest.amount);
-//     };
-// };
+var lastHarvestCron : Int = 0;
+var harvestInterval : Int = 60_000_000_000;
+
+private func processPendingHarvest(): async (){
+   let now = Time.now();
+    if (now - lastHarvestCron < harvestInterval) return;
+    lastHarvestCron := now;
+  //label queue 
+    label queue for ((txId, harvest) in pendingHarvests.entries()) {
+        ignore await transferToken(txId, harvest);
+    };
+};
 //Important Function - Transfer Token to receipts
-private func transferToken(to: Principal, amount: Nat): async Result.Result<Nat, Ext.CommonError>{
-    switch(await TokenCanister.transfer(to, amount)){
+private func transferToken(txId: Nat, harvest: Types.HarvestPendingTransaction): async Result.Result<Nat, Ext.CommonError>{
+    switch(await TokenCanister.transfer(harvest.to, harvest.amount)){
       case(#Ok(transId)){
+        //Delete Pending, Add Transaction
+        pendingHarvests.delete(txId);
+        harvestTransactions.put(txId, {
+            from    = cid;//Send from canister pool
+            to      = harvest.to;
+            time    = Time.now();
+            amount  = harvest.amount;
+            tokenTx = transId;
+        });
         #ok(transId);
       };
       case(#Err(e)) {
@@ -571,9 +633,9 @@ private func transferToken(to: Principal, amount: Nat): async Result.Result<Nat,
             case (#Unauthorized){
                  #err(#Other("Unauthorized"));
             };
-        }
-      }
-    }
+        };
+      };
+    };
 };
 
 };

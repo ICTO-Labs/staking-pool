@@ -45,6 +45,11 @@ module {
         HarvestTransaction
     )];
 
+    public type HarvestPendingResponse = [(
+        Nat,
+        HarvestPendingTransaction
+    )];
+
     //NFT transaction - Method: Stake/Unstake
     public type Transaction = {
         // id          : Nat32;
@@ -57,11 +62,20 @@ module {
     };
 
     //Token transaction
+    public type HarvestPendingTransaction = {
+        from        : Principal;
+        to          : Principal;
+        amount      : Nat;
+        time        : Time.Time;
+    };
+
+    //Token transaction
     public type HarvestTransaction = {
         from        : Principal;
         to          : Principal;
-        amount      : Nat64;
+        amount      : Nat;
         time        : Time.Time;
+        tokenTx     : Nat; //Token transfer receipt ID
     };
 
     public type StakingPool = {
@@ -84,7 +98,12 @@ module {
     public type PoolStats = {
         totalNFTStaked: Nat;
         totalRewarded: Nat64;
+        totalWeight: Nat;
         earned: Nat64; //Check earned of user
         staked: Nat; //Check total NFT staked by user
+        myWeight: Nat; //My Weight
+        minimumHarvest: Nat; //Min
+        intvalProcess: Nat;
+        lastProcessTime: Int;
     }
 }
