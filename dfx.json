@@ -1,6 +1,6 @@
 {
   "canisters": {
-    "2DWhale": {
+    "3DWhale": {
       "main": "src/main.mo",
       "type": "motoko"
     }

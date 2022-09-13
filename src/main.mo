@@ -34,13 +34,12 @@ import Ext "mo:ext/Ext";
 import Types "types";
 import Functions "functions";
 import Actor "actor";
-import Data "data";
 shared ({ caller = creator }) actor class CanicNFT(
     cid    : Principal, //This is Principal of this Canister.
 ) = {
 
 
-  private stable var _stakingCanister = "2tvxo-eqaaa-aaaai-acjla-cai";
+  private stable var _stakingCanister = "e4ca6-oiaaa-aaaai-acm2a-cai";//3D whale
   private stable var _rewardCanister = "e2gn7-5aaaa-aaaal-abata-cai";
   //Pool INIT
   private stable var _stakingPool      : Types.StakingPool = {
@@ -102,7 +101,7 @@ shared ({ caller = creator }) actor class CanicNFT(
 
   //Data of Tier
 
-  private var _TierData : [(Text)] = Data.getData();
+  // private var _TierData : [(Text)] = Data.getData();
 
 
   /*
@@ -276,8 +275,8 @@ public shared ({ caller }) func harvest(request: Types.HarvestRequest) : async R
       let stakeAddress : Ext.AccountIdentifier = AccountBlob.toText(AccountBlob.fromPrincipal(cid, ?subaccount));
 
       //get Multiplier from Tier data 
-      let _tier = _TierData.get(Nat32.toNat(index));
-      let _multiply = Data.getMultiply(_tier);
+      //let _tier = _TierData.get(Nat32.toNat(index));
+      // let _multiply = 9;//Default for every NFT Data.getMultiply(_tier);
       //Add to pending
       pendingStakings.put(index, {
         stakeAddress = stakeAddress;
@@ -287,7 +286,7 @@ public shared ({ caller }) func harvest(request: Types.HarvestRequest) : async R
         stakeTime = Time.now();
         harvestTime = Time.now();
         earned = 0;
-        multiply = _multiply; //Depend on NRI, Tier...etc
+        multiply = 9; //Depend on NRI, Tier...etc
       });
 
       #ok(stakeAddress);
@@ -357,6 +356,40 @@ public shared ({ caller }) func harvest(request: Types.HarvestRequest) : async R
   //     assert(caller == creator);
   //     // await transferToken(to, amount);
   // };
+
+  public shared ({ caller }) func refundPending(
+    index: Ext.TokenIndex,
+  ) : async Result.Result<(), Ext.CommonError>{
+      assert(caller == creator);
+        // Retrieve the pending transaction.
+      switch (pendingStakings.get(index)) {
+          case (?staking){
+           let subaccount = Functions.getNextSubAccount(staking.stakeSubAccount);
+           let c = Principal.fromText(_stakingCanister);
+          let token = Ext.TokenIdentifier.encode(c, index);
+          switch(await NFTCanister.transfer({
+              to = #address(staking.staker);
+              from = #address(staking.stakeAddress);
+              subaccount = subaccount;//Sent from stake address subaccount
+              token = token;
+              notify = false;
+              memo = Blob.fromArray([]:[Nat8]);
+              amount = 1;
+            })){
+              case (#err(_)){
+                  return #err(#Other("No such pending staking."));
+              };
+              case (#ok(_)){
+                pendingStakings.delete(index);
+                #ok();  
+              };
+            };
+          };
+          case _ {
+                return #err(#Other("No such pending staking."));
+          };
+      };
+  };
 
   public shared ({ caller }) func safeTransfer (
     token: Ext.TokenIdentifier,
