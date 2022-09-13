@@ -40,6 +40,8 @@ shared ({ caller = creator }) actor class CanicNFT(
 ) = {
 
 
+  private stable var _stakingCanister = "2tvxo-eqaaa-aaaai-acjla-cai";
+  private stable var _rewardCanister = "e2gn7-5aaaa-aaaal-abata-cai";
   //Pool INIT
   private stable var _stakingPool      : Types.StakingPool = {
       name = "Staking Pool";
@@ -58,8 +60,8 @@ shared ({ caller = creator }) actor class CanicNFT(
   };
 
   //Define actor canister
-  let NFTCanister : Actor.NFT = actor(_stakingPool.stakingToken);//Staking Canister: "mxftc-eyaaa-aaaap-qanga-cai"
-  let TokenCanister : Actor.Token = actor(_stakingPool.rewardToken);//"qi26q-6aaaa-aaaap-qapeq-cai");//Reward Canister
+  let NFTCanister : Actor.NFT = actor(_stakingCanister);//Staking Canister: "mxftc-eyaaa-aaaap-qanga-cai"
+  let TokenCanister : Actor.Token = actor(_rewardCanister);//"qi26q-6aaaa-aaaap-qapeq-cai");//Reward Canister
 
 
   private stable var _admins              : [Principal] = [creator];
@@ -68,12 +70,12 @@ shared ({ caller = creator }) actor class CanicNFT(
   private stable var _harvestIdx          : Nat = 0;
 
   // Heartbeat - System cronjob
-  private stable var s_heartbeatIntervalSeconds : Nat = 5;//Distribute every 1 minute
+  private stable var s_heartbeatIntervalSeconds : Nat = 600;//Distribute every 1 minute
   private stable var s_heartbeatLastBeat : Int = 0;
   private stable var s_heartbeatOn : Bool = true;
 
   // Pool setting
-  private stable var _totalWeight : Nat = 0; //This is base on NRI, Tier...
+  private stable var _totalWeight : Int = 0; //This is base on NRI, Tier...
   private stable var _totalRewarded : Nat64 = 0; //Total rewarded counter.
 
 
@@ -186,12 +188,12 @@ shared ({ caller = creator }) actor class CanicNFT(
 public query func poolStats(address: Ext.AccountIdentifier) : async Types.PoolStats {
     var _myStaked : Nat = 0;
     var _myEarned : Nat64 = 0;
-    var _myWeight : Nat = 0;
+    var _myWeight : Int = 0;
     for ((idx, stake) in stakings.entries()) {
       if(stake.staker == address){
           _myEarned += stake.earned;
           _myStaked += 1;
-          _myWeight += stake.multiply;
+          _myWeight += Float.toInt(stake.multiply);
       };
     };
 
@@ -317,7 +319,7 @@ public shared ({ caller }) func harvest(request: Types.HarvestRequest) : async R
                   if(AccountIdentifier.fromText(owner) == stakeAddress){
                     stakings.put(index, staking);
                     
-                    _totalWeight += staking.multiply; //This is increase weight of pool, do not forget.
+                    _totalWeight += Float.toInt(staking.multiply); //This is increase weight of pool, do not forget.
 
                     pendingStakings.delete(index);
                     //3. Write transaction
@@ -412,7 +414,7 @@ public shared ({ caller }) func harvest(request: Types.HarvestRequest) : async R
                 //2. Delete staking list
                 stakings.delete(index);
 
-                _totalWeight -= staking.multiply; //This is increase weight of pool, do not forget.
+                _totalWeight -= Float.toInt(staking.multiply); //This is increase weight of pool, do not forget.
 
                 //3. Write transaction
                 transactions.put(_tranIdx, {
@@ -512,7 +514,7 @@ private func calculateEarning (index: Ext.TokenIndex, staking: Types.Staking): a
   //Checking condition
   if(stakedSecond < s_heartbeatIntervalSeconds*1_000_000_000) return;
   //if(_totalWeight <= 0 or _stakingPool.rewardPerSecond <= 0) return;//Check before add earned, make sure Pool active
-  let earnedPerSecond = (staking.multiply*_stakingPool.rewardPerSecond)/_totalWeight;
+  let earnedPerSecond = (Float.toInt(staking.multiply)*_stakingPool.rewardPerSecond)/_totalWeight;
   let earnedInBlock: Int = (stakedSecond/1_000_000_000)*earnedPerSecond;
 
 // if(Nat64.toNat(Nat64.fromIntWrap(earnedInBlock)) < _minimumHarvest) return; //Accept minimum token to harvest
@@ -539,7 +541,7 @@ private func processHarvest (index: Ext.TokenIndex, staking: Types.Staking): asy
   let timeNow = Time.now();
   let stakedSecond = timeNow-staking.harvestTime;
 
-  let earnedPerSecond = (staking.multiply*_stakingPool.rewardPerSecond)/_totalWeight;
+  let earnedPerSecond = (Float.toInt(staking.multiply)*_stakingPool.rewardPerSecond)/_totalWeight;
   // let earnedInBlock = Int.abs(Float.toInt(Float.floor((stakedSecond/1_000_000_000)*earnedPerSecond)));
   // let earnedPerSecond = (staking.multiply*_stakingPool.rewardPerSecond)/_totalWeight;
   let earnedInBlock: Int = (stakedSecond/1_000_000_000)*earnedPerSecond;

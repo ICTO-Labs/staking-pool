@@ -32,7 +32,7 @@ module {
         stakeTime: Time.Time;
         harvestTime: Time.Time;
         earned: Nat64;
-        multiply: Nat; //Depend on NRI, Tier...etc
+        multiply: Float; //Depend on NRI, Tier...etc
     };
 
     public type TransactionResponse = [(
@@ -98,10 +98,10 @@ module {
     public type PoolStats = {
         totalNFTStaked: Nat;
         totalRewarded: Nat64;
-        totalWeight: Nat;
+        totalWeight: Int;
         earned: Nat64; //Check earned of user
         staked: Nat; //Check total NFT staked by user
-        myWeight: Nat; //My Weight
+        myWeight: Int; //My Weight
         minimumHarvest: Nat; //Min
         intvalProcess: Nat;
         lastProcessTime: Int;

@@ -1,6 +1,6 @@
 {
   "canisters": {
-    "stakingPool": {
+    "2DWhale": {
       "main": "src/main.mo",
       "type": "motoko"
     }
