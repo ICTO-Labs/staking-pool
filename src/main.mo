@@ -173,6 +173,15 @@ shared ({ caller = creator }) actor class CanicNFT(
       _minimumHarvest := i;
   };
 
+  //Set minimum harvest
+  public query func subaccountToAddress (
+      from_subaccount : Nat
+  ) : async Text {
+      let subaccount = Functions.getNextSubAccount(from_subaccount);
+      let stakeAddress : Ext.AccountIdentifier = AccountBlob.toText(AccountBlob.fromPrincipal(cid, ?subaccount));
+      return stakeAddress;
+  };
+
   public shared ({ caller }) func heartbeatSwitch (
       on : Bool
   ) : async () {
@@ -206,6 +215,7 @@ public query func poolStats(address: Ext.AccountIdentifier) : async Types.PoolSt
         minimumHarvest = _minimumHarvest;
         intvalProcess = s_heartbeatIntervalSeconds;
         lastProcessTime = s_heartbeatLastBeat;
+        cycles = Cycles.balance();
     };
    
     _poolStats;
