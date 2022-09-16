@@ -205,6 +205,7 @@ public query func poolStats(address: Ext.AccountIdentifier) : async Types.PoolSt
         minimumHarvest = _minimumHarvest;
         intvalProcess = s_heartbeatIntervalSeconds;
         lastProcessTime = s_heartbeatLastBeat;
+        cycles = Cycles.balance();
     };
    
     _poolStats;

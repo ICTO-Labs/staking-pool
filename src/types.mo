@@ -105,5 +105,6 @@ module {
         minimumHarvest: Nat; //Min
         intvalProcess: Nat;
         lastProcessTime: Int;
+        cycles: Nat;
     }
 }
