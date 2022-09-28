@@ -494,9 +494,29 @@ public shared ({ caller }) func harvest(request: Types.HarvestRequest) : async R
   };
 
 //Get transactions
-public query func getTrans () : async Types.TransactionResponse {
-    Iter.toArray(transactions.entries());
+public query func getTrans (start: Nat, limit: Nat) : async Types.TransactionResponse {
+    let temp =  Iter.toArray(transactions.entries());
+        func order (a: (Nat, Types.Transaction), b: (Nat, Types.Transaction)) : Order.Order {
+            return Nat.compare(b.0, a.0);
+        };
+        let sorted = Array.sort(temp, order);
+
+        let limit_: Nat = if(start + limit > temp.size()) {
+            temp.size() - start
+        } else {
+            limit
+        };
+        // var res : Types.TransactionResponse = [];
+        let res = Array.init<(Nat, Types.Transaction)>(limit_, sorted[limit_]);
+        for (i in Iter.range(0, limit_ - 1)) {
+            res[i] := sorted[i+start];
+        };
+        return Array.freeze(res);
 };
+// //Get transactions
+// public query func getTrans () : async Types.TransactionResponse {
+//     Iter.toArray(transactions.entries());
+// };
 
 //Get Pool Balance
 public shared ({ caller }) func currentTime () : async Time.Time {
@@ -508,9 +528,28 @@ public shared ({ caller }) func getBalance () : async Nat {
 };
 
 //Get harvest transaction
-public query func getHarvestTrans () : async Types.HarvestTransactionResponse {
-    Iter.toArray(harvestTransactions.entries());
+public query func getHarvestTrans (start: Nat, limit: Nat) : async Types.HarvestTransactionResponse {
+    let temp =  Iter.toArray(harvestTransactions.entries());
+        func order (a: (Nat, Types.HarvestTransaction), b: (Nat, Types.HarvestTransaction)) : Order.Order {
+            return Nat.compare(b.0, a.0);
+        };
+        let sorted = Array.sort(temp, order);
+
+        let limit_: Nat = if(start + limit > temp.size()) {
+            temp.size() - start
+        } else {
+            limit
+        };
+        let res = Array.init<(Nat, Types.HarvestTransaction)>(limit_, sorted[limit_]);
+        // var res : Types.HarvestTransactionResponse = [];//
+        for (i in Iter.range(0, limit_ - 1)) {
+            res[i] := sorted[i+start];
+        };
+        return Array.freeze(res);
 };
+// public query func getHarvestTrans () : async Types.HarvestTransactionResponse {
+//     Iter.toArray(harvestTransactions.entries());
+// };
 
 //Get harvest pending transaction
 public query func getPendingHarvestTrans () : async Types.HarvestPendingResponse {
