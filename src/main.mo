@@ -16,6 +16,7 @@ import Array "mo:base/Array";
 import Buffer "mo:base/Buffer";
 import Cycles "mo:base/ExperimentalCycles";
 import Error "mo:base/Error";
+import CyclesWallet "./CyclesWallet";
 
 import Option "mo:base/Option";
 import Order "mo:base/Order";
@@ -181,7 +182,11 @@ shared ({ caller = creator }) actor class CanicNFT(
   public query func poolInfo() : async Types.StakingPool {
       _stakingPool;
   };
-
+  //Receive Cycles
+    public func wallet_receive(): async (){
+      let amout = Cycles.available();
+      let accepted = Cycles.accept(amout);
+  };
 //Get my stats
 public query func poolStats(address: Ext.AccountIdentifier) : async Types.PoolStats {
     var _myStaked : Nat = 0;
