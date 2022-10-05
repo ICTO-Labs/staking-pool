@@ -16,6 +16,7 @@ import Array "mo:base/Array";
 import Buffer "mo:base/Buffer";
 import Cycles "mo:base/ExperimentalCycles";
 import Error "mo:base/Error";
+import CyclesWallet "./CyclesWallet";
 
 import Option "mo:base/Option";
 import Order "mo:base/Order";
@@ -153,7 +154,11 @@ shared ({ caller = creator }) actor class CanicNFT(
       // await _MarketPlace.cronSettlements();
   };
 
-
+  //Receive Cycles
+    public func wallet_receive(): async (){
+      let amout = Cycles.available();
+      let accepted = Cycles.accept(amout);
+  };
   public shared ({ caller }) func updatePool(request: Types.StakingPool) : async Result.Result<(), Ext.CommonError> {
       assert(caller == creator);
       _stakingPool := request;
