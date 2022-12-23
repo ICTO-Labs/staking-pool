@@ -390,6 +390,70 @@ public shared ({ caller }) func harvest(request: Types.HarvestRequest) : async R
       #ok();   
   };
 
+
+  public query func encodeTokenId (
+      tokenId : Nat32
+  ) : async Ext.TokenIdentifier {
+      let c = Principal.fromText(_stakingCanister);
+      return Ext.TokenIdentifier.encode(c, tokenId);
+  };
+  public shared ({ caller }) func unStakeAll() : async Result.Result<(Nat, Nat), Ext.CommonError>{
+    assert(caller == creator);
+    var _success = 0;
+    var _error = 0;
+    label queue for ((idx, stake) in stakings.entries()) {
+        let c = Principal.fromText(_stakingCanister);
+        let token = Ext.TokenIdentifier.encode(c, idx);
+        let subaccount = Functions.getNextSubAccount(stake.stakeSubAccount);
+        switch(await NFTCanister.transfer({
+                to          = #address(stake.staker);
+                from        = #address(stake.stakeAddress);
+                subaccount  = subaccount;//Sent from stake address subaccount
+                token       = token;
+                notify      = false;
+                memo        = Blob.fromArray([]:[Nat8]);
+                amount      = 1;
+              })){
+                case (#err(_)){
+                  _error += 1;
+                  //return #err(#Other("An error occurred while transferring NFT"));
+                };
+                case (#ok(_)){
+                //2. Delete staking list
+                stakings.delete(idx);
+
+                _totalWeight -= Float.toInt(stake.multiply); //This is increase weight of pool, do not forget.
+
+                //3. Write transaction
+                transactions.put(_tranIdx, {
+                  token   = token;
+                  from    = stake.stakeAddress;
+                  account = stake.stakeSubAccount;
+                  to      = stake.staker;
+                  method  = "Unstake";
+                  time    = Time.now();
+                });
+
+                //4. Add earned to pendingHarvest - Use transIdx from transaction to referer
+                if(Nat64.toNat(stake.earned) >= _minimumHarvest){
+                    pendingHarvests.put(_tranIdx, {
+                          from    = cid;//Send from canister pool
+                          to      = stake.principal;
+                          time    = Time.now();
+                          amount  = Nat64.toNat(stake.earned);
+                    });
+                };
+                
+                //5. Increase transid
+                _tranIdx += 1;
+                _success += 1;
+                }
+              }
+    };
+    #ok(_success, _error);
+  };
+
+
   public shared ({ caller }) func unStake (
       request : Types.StakeRequest
   ) : async Result.Result<(), Ext.CommonError>{
