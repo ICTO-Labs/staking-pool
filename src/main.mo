@@ -390,6 +390,46 @@ public shared ({ caller }) func harvest(request: Types.HarvestRequest) : async R
       #ok();   
   };
 
+  public shared ({ caller }) func withdraw(to: Principal, amount: Nat): async Result.Result<Nat, Ext.CommonError>{
+      assert(caller == creator);
+      switch(await TokenCanister.transfer(to, amount)){
+        case(#Ok(transId)){
+          #ok(transId);
+        };
+        case(#Err(e)) {
+          switch (e) {
+              case (#AmountTooSmall){
+                  #err(#Other("AmountTooSmall"));
+              };
+              case (#BlockUsed){
+                  #err(#Other("BlockUsed"));
+              };
+              case (#ErrorOperationStyle){
+                  #err(#Other("ErrorOperationStyle"));
+              };
+              case (#ErrorTo){
+                  #err(#Other("ErrorTo"));
+              };
+              case (#InsufficientAllowance){
+                  #err(#Other("InsufficientAllowance"));
+              };
+              case (#InsufficientBalance){
+                  #err(#Other("InsufficientBalance"));
+              };
+              case (#LedgerTrap){
+                  #err(#Other("LedgerTrap"));
+              };
+              case (#Other(m)){
+                  #err(#Other("Other: " # m));
+              };
+              case (#Unauthorized){
+                  #err(#Other("Unauthorized"));
+              };
+          };
+        };
+      };
+  };
+
   public query func encodeTokenId (
       tokenId : Nat32
   ) : async Ext.TokenIdentifier {
